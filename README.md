@@ -100,6 +100,8 @@ This project follows the **CRISP-DM** (Cross-Industry Standard Process for Data 
 - Visualized clusters using `Folium` on an interactive NYC map.
 - Mapped clusters to dominant boroughs using GeoJSON files.
 
+[View interactive NYC cluster map (GitHub Pages)](https://sgbyteninja.github.io/nyc-taxi-demand-forecasting/nyc_clustered_sample_map.html)
+
 ---
 
 ### 5. Feature Engineering
