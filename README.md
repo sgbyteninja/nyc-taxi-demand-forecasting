@@ -67,100 +67,123 @@ This project follows the **CRISP-DM** (Cross-Industry Standard Process for Data 
 
 ### 1. Business Understanding
 
-- Define the objective: Predict hourly taxi demand for the top 10 spatial clusters in NYC.
-- Support goal: Assist transport logistics teams in allocating fleets based on expected demand.
+- Problem: How to efficiently allocate taxis based on forecasted demand?
+- Goal: Predict demand per hour in the 10 busiest spatial clusters.
+- Output: Cluster-specific demand forecasts with interpretable model performance.
 
 ---
 
 ### 2. Data Understanding
 
-- Collected ~4.5 million taxi trips from April to September 2014.
-- Data columns: `datetime`, `latitude`, `longitude`, `base` (cab center).
-- Verified structure and completeness (no missing values).
-- Detected time-based demand trends (e.g. weekdays vs. weekends, seasonal variation).
+- Dataset: 4.5 million NYC taxi rides from April to September 2014.
+- Fields: `datetime`, `latitude`, `longitude`, `base`.
+- Quality: No missing values. Detected clear weekday/weekend and seasonal patterns.
 
 ---
 
 ### 3. Data Preparation
 
-- Merged all monthly CSV files into a unified dataset.
-- Converted `datetime` to pandas `datetime` format.
-- Created features: `hour`, `weekday`, `month`, `is_weekend`, `is_holiday`.
-- Weather data from KTEB0 station merged via backward fill using `merge_asof`.
-- Transformed GPS coordinates into **UTM** for better clustering accuracy.
-- Ensured complete hourly time series by filling gaps with zero rides.
+- Combined and cleaned monthly CSVs.
+- Generated temporal features: `hour`, `weekday`, `month`, `is_weekend`, `is_holiday`.
+- Weather data from KTEB0 merged but removed later due to degraded model performance.
+- Converted coordinates to UTM for improved clustering.
+- Created gapless time series by filling missing hours with zeros.
 
 ---
 
 ### 4. Clustering (MiniBatch K-Means)
 
-- Applied MiniBatch K-Means on UTM-transformed coordinates.
-- Optimal number of clusters determined via silhouette analysis.
-- Selected the **top 10 clusters** by total ride volume.
-- Visualized clusters using `Folium` on an interactive NYC map.
-- Mapped clusters to dominant boroughs using GeoJSON files.
-
-[View interactive NYC cluster map (GitHub Pages)](https://sgbyteninja.github.io/nyc-taxi-demand-forecasting/nyc_clustered_sample_map.html)
+- Clustered GPS data using MiniBatch K-Means on UTM coordinates.
+- Selected top 10 clusters based on ride volume.
+- Mapped clusters to NYC boroughs using GeoJSON shapes.
+- Interactive visualization:  
+  [View NYC Clusters Map (GitHub Pages)](https://sgbyteninja.github.io/nyc-taxi-demand-forecasting/nyc_clustered_sample_map.html)
 
 ---
 
 ### 5. Feature Engineering
 
-- Constructed additional time-series features:
-  - `lag_1`, `lag_2`, `lag_3` (previous hour(s) ride count)
-  - `rolling_mean_3`, `rolling_std_6` (3-hour moving average / 6-hour rolling std)
-  - `is_weekend`, `is_holiday`, `month`, `weekday`
+- Generated lag and rolling features (`lag_1`, `lag_2`, ..., `lag_168` (one week) and `lag_672`lag_672 (one month)).
 - Aggregated hourly demand per cluster.
-- Prepared data windows (1–4 weeks) for model training/testing.
+- Built time series windows of 4 weeks to predict the next 24 hours.
+- Final models used temporal features only (weather removed due to poor contribution).
 
 ---
 
-### 6. Initial Modeling with Random Forest
+### 6. Modeling and Evaluation
 
-- Used **RandomForestRegressor** to predict hourly ride volume.
-- Two model stages:
-  - **Baseline Model**: using `hour` and `weekday` only.
-  - **Advanced Feature Model**: with full feature set as described above.
-- Applied **sliding window evaluation**:
-  - Trained on prior 4 weeks, forecasted next 24 hours.
-  - Evaluated using **RMSE** and daily demand error.
+#### Baseline Modeling
 
----
+- Random Forest Regressor trained using `hour`, `weekday` and `hour_index` only.
+- Applied sliding window evaluation:
+  - Train: Previous 4 weeks  
+  - Forecast: Next 24 hours  
+- RMSE used to compare performance across clusters.
 
-### 7. Advanced Model Optimization
+#### Enriched Feature Models
 
-- Performed **Grid Search** on Random Forest hyperparameters:
-  - `n_estimators`, `max_depth`, `min_samples_split`, `min_samples_leaf`, `max_features`, `bootstrap`
-- Used **TimeSeriesSplit** (5 folds) to avoid temporal leakage.
-- Conducted tuning separately for each cluster to capture unique patterns.
-- Selected the best model per cluster based on **lowest RMSE** from validation.
-- Observations:
-  - Deep, unbootstrapped trees (`max_depth=None`, `bootstrap=False`) often performed best.
-  - For some clusters (e.g., 0, 1, 2, 7, 9), a lower number of estimators (e.g., 100) was sufficient.
-  - In many clusters, the advanced feature model without hyperparameter tuning performed better than the tuned one — highlighting the limits of parameter optimization when data variability is high.
+- Same sliding window setup, now using full temporal feature set.
+- Showed substantial improvement over the baseline in most clusters.
 
 ---
 
-### 8. Evaluation
+### 7. Hyperparameter Optimization (Grid Search)
 
-- Forecasted demand for the final 24 hours using the last 4 weeks of data.
-- Compared predicted vs. actual hourly demand for each cluster.
-- **Best performance**:
-  - Cluster 3: RMSE = 2.03, daily error = 0.36%
-  - Cluster 6: RMSE = 2.95, daily error = 0.69%
-- **Worst performance**:
-  - Cluster 7 (largest/most volatile): RMSE = 42.21, daily error = 1.00%
-- Weather features were excluded from final models as they slightly reduced performance.
+- Grid search applied to tune `n_estimators`, `max_depth`, `min_samples_split`, `min_samples_leaf`, `max_features`, `bootstrap`.
+- Used **sliding window cross-validation** to preserve time order.
+- Each cluster tuned independently due to varying demand patterns.
+
+**Key Insights:**
+
+- No single configuration worked best across all clusters.
+- Most clusters used 100 trees; Cluster 9 required 200.
+- Clusters 0, 2, 6, and 7 benefited from `max_depth=10`.
+- Best models achieved RMSE between **4.48 (Cluster 3)** and **70.39 (Cluster 7)**.
+- Optimal hyperparameters were saved and reused for final evaluation.
+
+---
+
+### 8. Final Model Evaluation (24-Hour Forecast)
+
+Each cluster was trained on the last 4 weeks of data using the best-tuned model. The following 24 hours were forecasted and evaluated using:
+
+- **RMSE** (Root Mean Square Error)
+- **Daily Demand Error (%)**
+- **MAPE** (Mean Absolute Percentage Error)  
+  – shows relative error across hourly demand values (Hyndman & Koehler, 2006)
+
+#### Key Results:
+
+| Cluster | RMSE   | Daily Error % | MAPE %  |
+|---------|--------|----------------|---------|
+| 0       | 30.90  | 2.28           | 12.88   |
+| 1       | 9.75   | 9.20           | 32.34   |
+| 2       | 34.51  | 0.77           | 15.63   |
+| 3       | 4.74   | 15.33          | 60.96   |
+| 4       | 8.04   | 7.76           | 23.86   |
+| 5       | 14.20  | 1.13           | 17.37   |
+| 6       | 5.39   | 1.78           | 15.66   |
+| 7       | 71.97  | 4.89           | 12.03   |
+| 8       | 24.98  | 3.14           | 11.76   |
+| 9       | 11.06  | 3.64           | 14.99   |
+
+- High-volume clusters like 0 and 7 remained volatile but improved.
+- Clusters 3 and 6 showed excellent performance with low RMSE.
+- Most clusters achieved **<5% daily error**, proving practical reliability.
+- MAPE revealed challenges in clusters with irregular or low volume (e.g. Cluster 3).
+
+> The comparison confirms that **feature engineering alone is not sufficient** — combining engineered features with **systematic hyperparameter tuning** was key to achieving robust performance, especially in complex or volatile demand environments.
 
 ---
 
 ### 9. Deployment Proposal
 
-- Automate data ingestion and transformation pipelines.
-- Schedule hourly model retraining using recent 4-week windows.
-- Serve predictions via API (e.g., Flask or FastAPI).
-- Build an interactive dashboard with Power BI or Streamlit for the logistics team.
-- Compare with alternative models (e.g., LSTM, TBATS, NeuralProphet) for long-term or multi-seasonal demand forecasting.
+- Automate daily ingestion of new GPS trip data.
+- Retrain models weekly using last 4 weeks of history.
+- Deploy API-based service (Flask/FastAPI) for predictions.
+- Build interactive dashboard for planners (e.g. Streamlit).
+- Consider ensemble methods or deep learning (e.g. LSTM) for long-term forecasting.
 
 ---
-<p><small>Project based on the <a target="_blank" href="https://drivendata.github.io/cookiecutter-data-science/">cookiecutter data science project template</a>. #cookiecutterdatascience</small></p>
+
+<small>Project based on the <a href="https://drivendata.github.io/cookiecutter-data-science/" target="_blank">cookiecutter data science</a> template.</small>
